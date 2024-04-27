@@ -1,0 +1,230 @@
+﻿AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Template to connect DynamoDB Stream to EventBridge
+
+Resources:
+  DynamoDBStockOnHandTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: StockOnHand
+      AttributeDefinitions:
+        - AttributeName: sku
+          AttributeType: S
+      KeySchema:
+        - AttributeName: sku
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES    
+
+  StockOnHandEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: StockEventBus
+
+  PipeDLQueue: 
+    Type: AWS::SQS::Queue    
+
+  PipeDLQPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref PipeDLQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "events.amazonaws.com"
+            Action: "sqs:SendMessage"
+            Resource: !GetAtt PipeDLQueue.Arn
+            Condition:
+              ArnEquals:
+                "aws:SourceArn": !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StockEventBus/*"
+
+  StockOnHandFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: StockOnHandFunction
+      CodeUri: .
+      Description: 'Invoked by eventbridge SOH events '
+      MemorySize: 1024
+      Timeout: 30
+      Handler: SohWithEventBridge::SohWithEventBridge.Function::StockOnHandEventHandler
+      Runtime: dotnet8
+      Architectures:
+        - arm64
+      Policies:
+        - AWSLambdaBasicExecutionRole
+
+  PipeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - pipes.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: SourcePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "dynamodb:DescribeStream"
+                  - "dynamodb:GetRecords"
+                  - "dynamodb:GetShardIterator"
+                  - "dynamodb:ListStreams"
+                  - "sqs:SendMessage"
+                Resource: 
+                  - !GetAtt DynamoDBStockOnHandTable.StreamArn
+                  - !GetAtt PipeDLQueue.Arn
+        - PolicyName: TargetPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'events:PutEvents'
+                Resource: !GetAtt StockOnHandEventBus.Arn
+
+  Pipe:
+    Type: AWS::Pipes::Pipe
+    Properties:
+      Name: ddb-to-eventbridge
+      Description: "Pipe to connect DDB stream to EventBridge event bus"
+      RoleArn: !GetAtt PipeRole.Arn
+      Source: !GetAtt DynamoDBStockOnHandTable.StreamArn
+      SourceParameters:
+        DynamoDBStreamParameters:
+          StartingPosition: LATEST
+          BatchSize: 10
+          DeadLetterConfig:
+            Arn: !GetAtt PipeDLQueue.Arn
+      Target: !GetAtt StockOnHandEventBus.Arn
+      TargetParameters:
+        EventBridgeEventBusParameters:
+          DetailType: "StockEvent"
+          Source: "soh.event"
+
+  # CloudWatch Logs Group
+  EventLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/events/StockEvents
+
+  # EventBridge Rule for CloudWatch Logging
+  LogRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Rule to log all StockEventBus events to CloudWatch"
+      EventBusName: !Ref StockOnHandEventBus
+      EventPattern:
+        source:
+          - "soh.event"
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt EventLogGroup.Arn
+          Id: "EventLogGroupTarget"
+
+  # IAM Role for EventBridge to CloudWatch Logs
+  LogRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: CloudWatchLogsPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: 
+                  - !GetAtt EventLogGroup.Arn
+
+  StockOnHandFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt StockOnHandFunction.Arn
+      Principal: events.amazonaws.com
+      SourceArn: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StockEventBus/*'
+
+  OutOfStockRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: OutOfStockRule
+      EventBusName: !Ref StockOnHandEventBus
+      EventPattern:
+        source:
+          - "soh.event"
+        "detail-type":
+          - "StockEvent"
+        detail:
+          eventSource:
+            - "aws:dynamodb"
+          eventName:
+            - "MODIFY"
+          dynamodb:
+            OldImage:
+              soh:
+                N:
+                  - "anything-but": "0"
+            NewImage:
+              soh:
+                N:
+                  - "0"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt StockOnHandFunction.Arn
+          Id: "StockOnHandLambda"
+          DeadLetterConfig:
+            Arn: !GetAtt PipeDLQueue.Arn
+
+  InStockRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: InStockRule
+      EventBusName: !Ref StockOnHandEventBus
+      EventPattern:
+        source:
+          - "soh.event"
+        "detail-type":
+          - "StockEvent"
+        detail:
+          eventSource:
+            - "aws:dynamodb"
+          eventName:
+            - "MODIFY"
+          dynamodb:
+            NewImage:
+              soh:
+                N:
+                  - "anything-but": "0"
+            OldImage:
+              soh:
+                N:
+                  - "0"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt StockOnHandFunction.Arn
+          Id: "StockOnHandLambda"
+          DeadLetterConfig:
+            Arn: !GetAtt PipeDLQueue.Arn
