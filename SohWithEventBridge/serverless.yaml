@@ -25,7 +25,10 @@ Resources:
       Name: StockEventBus
 
   PipeDLQueue: 
-    Type: AWS::SQS::Queue    
+    Type: AWS::SQS::Queue   
+    Properties: 
+      QueueName: DLQ-StockEvents
+
 
   PipeDLQPolicy:
     Type: AWS::SQS::QueuePolicy
@@ -228,3 +231,5 @@ Resources:
           Id: "StockOnHandLambda"
           DeadLetterConfig:
             Arn: !GetAtt PipeDLQueue.Arn
+
+
