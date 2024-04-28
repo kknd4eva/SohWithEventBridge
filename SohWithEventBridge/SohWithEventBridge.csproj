@@ -16,9 +16,6 @@
     <PackageReference Include="Amazon.Lambda.Serialization.SystemTextJson" Version="2.4.1" />
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="Models\" />
-    <Folder Include="Interfaces\" />
     <Folder Include="TestScripts\" />
-    <Folder Include="Services\" />
   </ItemGroup>
 </Project>

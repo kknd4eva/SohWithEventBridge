@@ -12,5 +12,5 @@
   "function-runtime": "dotnet8",
   "function-memory-size": 512,
   "function-timeout": 30,
-  "function-handler": "SohWithEventBridge::SohWithEventBridge.Function::FunctionHandler"
+  "function-handler": "SohWithEventBridge::SohWithEventBridge.Function::StockOnHandEventHandler"
 }
