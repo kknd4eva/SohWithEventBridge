@@ -53,21 +53,6 @@ Resources:
               ArnEquals:
                 "aws:SourceArn": !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StockEventBus/*"
 
-  StockOnHandFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: StockOnHandFunction
-      CodeUri: .
-      Description: 'Invoked by eventbridge SOH events '
-      MemorySize: 1024
-      Timeout: 30
-      Handler: SohWithEventBridge::SohWithEventBridge.Function::StockOnHandEventHandler
-      Runtime: dotnet8
-      Architectures:
-        - arm64
-      Policies:
-        - AWSLambdaBasicExecutionRole
-
   EventBridgeTargetRole:
     Type: AWS::IAM::Role
     Properties:
@@ -187,14 +172,6 @@ Resources:
                   - "logs:PutLogEvents"
                 Resource: 
                   - !GetAtt EventLogGroup.Arn
-
-  StockOnHandFunctionInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !GetAtt StockOnHandFunction.Arn
-      Principal: events.amazonaws.com
-      SourceArn: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StockEventBus/*'
 
   EventApiConnection:
     Type: AWS::Events::Connection
