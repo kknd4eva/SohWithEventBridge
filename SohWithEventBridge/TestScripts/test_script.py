@@ -1,4 +1,5 @@
 import boto3
+import time
 import logging as log
 
 # Set up logging
@@ -39,6 +40,8 @@ def update_ddb_item(sku, new_soh):
         ReturnConsumedCapacity='TOTAL'
     )
     log.info(f'Consumed capacity: {response["ConsumedCapacity"]}')
+    # add a 1 second sleep
+    time.sleep(1)
     return response
 
 # Insert items
@@ -53,3 +56,5 @@ update_ddb_item('111837', 10)
 
 # Additional update
 update_ddb_item('111837', 0)
+update_ddb_item('111837', 11)
+update_ddb_item('111837', 4)
