@@ -2,6 +2,11 @@
 Transform: AWS::Serverless-2016-10-31
 Description: Template to connect DynamoDB Stream to EventBridge
 
+Parameters:
+  ApiDestination:
+    Type: String
+    Default: "https://t23ilm51j6.execute-api.ap-southeast-2.amazonaws.com/dev/200"
+
 Resources:
   DynamoDBStockOnHandTable:
     Type: AWS::DynamoDB::Table
@@ -17,7 +22,8 @@ Resources:
         ReadCapacityUnits: 5
         WriteCapacityUnits: 5
       StreamSpecification:
-        StreamViewType: NEW_AND_OLD_IMAGES    
+        StreamViewType: NEW_AND_OLD_IMAGES  
+
 
   StockOnHandEventBus:
     Type: AWS::Events::EventBus
@@ -61,6 +67,28 @@ Resources:
         - arm64
       Policies:
         - AWSLambdaBasicExecutionRole
+
+  EventBridgeTargetRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeApiPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'events:InvokeApiDestination'
+                Resource: !GetAtt EventApiDestination.Arn
 
   PipeRole:
     Type: AWS::IAM::Role
@@ -117,13 +145,11 @@ Resources:
           DetailType: "StockEvent"
           Source: "soh.event"
 
-  # CloudWatch Logs Group
   EventLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/events/StockEvents
 
-  # EventBridge Rule for CloudWatch Logging
   LogRule:
     Type: AWS::Events::Rule
     Properties:
@@ -170,6 +196,26 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StockEventBus/*'
 
+  EventApiConnection:
+    Type: AWS::Events::Connection
+    Properties:
+      Name: StockOnHandApiConnection
+      AuthorizationType: API_KEY
+      AuthParameters:
+        ApiKeyAuthParameters:
+          ApiKeyName: "x-api-key"
+          ApiKeyValue: "xxx"
+      Description: "Connection to API Gateway"
+
+  EventApiDestination:
+    Type: AWS::Events::ApiDestination
+    Properties:
+      Name: StockOnHandApiDestination
+      InvocationRateLimitPerSecond: 10
+      HttpMethod: POST
+      ConnectionArn: !GetAtt EventApiConnection.Arn
+      InvocationEndpoint: !Ref ApiDestination
+
   OutOfStockRule:
     Type: AWS::Events::Rule
     Properties:
@@ -196,10 +242,19 @@ Resources:
                   - "0"
       State: ENABLED
       Targets:
-        - Arn: !GetAtt StockOnHandFunction.Arn
-          Id: "StockOnHandLambda"
+        - Arn: !GetAtt EventApiDestination.Arn
+          RoleArn: !GetAtt EventBridgeTargetRole.Arn
+          Id: "StockOnHandApi"
           DeadLetterConfig:
             Arn: !GetAtt PipeDLQueue.Arn
+          InputTransformer:
+            InputPathsMap:
+              sku: "$.detail.dynamodb.NewImage.sku.S"
+            InputTemplate: |
+              {
+                "sku": <sku>,
+                "in_stock": false
+              }
 
   InStockRule:
     Type: AWS::Events::Rule
@@ -227,9 +282,18 @@ Resources:
                   - "0"
       State: ENABLED
       Targets:
-        - Arn: !GetAtt StockOnHandFunction.Arn
-          Id: "StockOnHandLambda"
+        - Arn: !GetAtt EventApiDestination.Arn
+          RoleArn: !GetAtt EventBridgeTargetRole.Arn
+          Id: "StockOnHandApi"
           DeadLetterConfig:
             Arn: !GetAtt PipeDLQueue.Arn
+          InputTransformer:
+            InputPathsMap:
+              sku: "$.detail.dynamodb.NewImage.sku.S"
+            InputTemplate: |
+              {
+                "sku": <sku>,
+                "in_stock": true
+              }
 
 
