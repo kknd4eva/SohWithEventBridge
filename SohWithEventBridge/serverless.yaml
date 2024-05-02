@@ -5,7 +5,7 @@ Description: Template to connect DynamoDB Stream to EventBridge
 Parameters:
   ApiDestination:
     Type: String
-    Default: "https://t23ilm51j6.execute-api.ap-southeast-2.amazonaws.com/dev/200"
+    Default: "<Your API here>"
 
 Resources:
   DynamoDBStockOnHandTable:
